@@ -9749,7 +9749,7 @@ async function aoMudarSessao(u){
     const p = snap.data() || {};
     const admin = await souAdmin();
     eu = {uid: u.uid, email: u.email || '', apelido: p.usuario || String(u.email || '').split('@')[0],
-          nome: p.nome || '', admin: admin, ativo: p.orcamentoAtivo === true, solicitado: p.orcamentoSolicitado === true};
+          nome: p.nome || '', admin: admin, ativo: p.orcamentoAtivo === true && p.recusado !== true && !(dataDe(p.validade) && dataDe(p.validade).getTime() < Date.now()), solicitado: p.orcamentoSolicitado === true};
   }catch(e){
     eu = null;
     $('ocFalhaMsg').textContent = traduzir(e, 'Não foi possível ler seu cadastro');
@@ -9814,20 +9814,7 @@ async function carregarLista(){
   }).sort((p, q) => (p.apelido || '').localeCompare(q.apelido || ''));
   return listaAdmin;
 }
-async function contarPendentes(){
-  try{
-    const l = await carregarLista();
-    const n = l.filter(x => x.solicitado && !x.ativo).length;
-    const b = $('btnAdminPanel'); if(b) b.textContent = '👥 Usuários' + (n ? ' (' + n + ' pendente' + (n > 1 ? 's' : '') + ')' : '');
-  }catch(e){}
-}
 window.atualizarContadoresAdmin = function(){};
-
-window.abrirAdmin = function(){
-  if(!eu || !eu.admin){ aviso('Apenas o administrador pode autorizar usuários.'); return; }
-  $('adminPanel').style.display = 'flex';
-  window.renderAdmin('pendentes');
-};
 
 window.renderAdmin = async function(filtro){
   filtro = filtro || 'pendentes';
@@ -9894,6 +9881,163 @@ function ligarPainel(){
   const cab = document.querySelector('#adminPanel .admin-box > div:first-child > div > div:last-child');
   if(cab) cab.textContent = 'Você autoriza quem pode usar o Orçamento';
 }
+
+/* ---------- Painel "Usuários" unificado (igual ao Pavimento Flexível e Intertravado) ----------
+   Um login por pessoa; em "Programas" o administrador marca o que cada uma pode usar. */
+const PROGRAMAS = [
+  { campo: 'ativo',             nome: 'Pavimento Flexível',     pedido: null },
+  { campo: 'orcamentoAtivo',    nome: 'Orçamento',              pedido: 'orcamentoSolicitado' },
+  { campo: 'intertravadoAtivo', nome: 'Pavimento Intertravado', pedido: 'intertravadoSolicitado' }
+];
+const ADMINS_TC = ['wfajardoeng@gmail.com', 'igororcobras@gmail.com'];
+function pediuProg(u, p){ return p.pedido ? !!u[p.pedido] : !(u.orcamentoSolicitado || u.intertravadoSolicitado); }
+function dataDe(v){ if(!v) return null; if(typeof v.toDate === 'function') return v.toDate(); const d = new Date(v); return isNaN(d) ? null : d; }
+
+async function listarTodos(){
+  const {d, fs} = fb;
+  const snap = await fs.getDocs(fs.query(fs.collection(d, 'usuarios'), fs.limit(500)));
+  const l = snap.docs.map(x => {
+    const v = x.data() || {}, venc = dataDe(v.validade);
+    return {uid: x.id, usuario: v.usuario || '', email: v.email || '', nome: v.nome || '', empresa: v.empresa || '',
+      ativo: !!v.ativo, orcamentoAtivo: !!v.orcamentoAtivo, intertravadoAtivo: !!v.intertravadoAtivo,
+      orcamentoSolicitado: !!v.orcamentoSolicitado, intertravadoSolicitado: !!v.intertravadoSolicitado,
+      recusado: !!v.recusado, validade: venc, vencida: !!(venc && venc.getTime() < Date.now()),
+      admin: v.admin === true || ADMINS_TC.indexOf(String(v.email || '').toLowerCase()) >= 0};
+  });
+  ADMINS_TC.forEach(em => { if(!l.some(x => String(x.email).toLowerCase() === em))
+    l.push({uid: null, email: em, usuario: em.split('@')[0], nome: '', empresa: '', admin: true}); });
+  return l;
+}
+const algumProg = u => PROGRAMAS.some(p => u[p.campo]);
+const estadoU = u => u.admin ? 'adm' : u.recusado ? 'rec' : !algumProg(u) ? 'pen' : u.vencida ? 'ven' : 'ok';
+
+async function contarPendentes(){
+  try{
+    const n = (await listarTodos()).filter(x => estadoU(x) === 'pen').length;
+    const b = $('btnAdminPanel'); if(b) b.textContent = '👥 Usuários' + (n ? ' (' + n + ' pendente' + (n > 1 ? 's' : '') + ')' : '');
+  }catch(e){}
+}
+
+function caixaUsuarios(){
+  let bg = $('tcUsuarios');
+  if(bg) return bg;
+  const css = document.createElement('style');
+  css.textContent = `
+#tcUsuarios{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:99999;display:none;overflow-y:auto;padding:24px 12px;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;}
+#tcUsuarios .cx{background:#fff;color:#1e293b;border-radius:10px;max-width:1100px;margin:auto;padding:20px;box-shadow:0 10px 40px rgba(0,0,0,.3);}
+#tcUsuarios h2{font-size:17px;margin:0;color:#17365D;font-weight:700;}
+#tcUsuarios .sub{font-size:12.5px;color:#475569;margin:4px 0 12px;}
+#tcUsuarios table{width:100%;border-collapse:collapse;font-size:12.5px;}
+#tcUsuarios th{background:#f1f5f9;color:#475569;text-align:left;padding:8px;font-size:11.5px;font-weight:600;}
+#tcUsuarios td{padding:8px;border-bottom:1px solid #e2e8f0;vertical-align:middle;}
+#tcUsuarios input[type=text],#tcUsuarios input[type=date]{padding:5px 7px;border:1px solid #b8a800;background:#FFFFF0;border-radius:4px;font-size:12px;color:#1e293b;}
+#tcUsuarios .progs{display:flex;flex-direction:column;gap:3px;white-space:nowrap;}
+#tcUsuarios .progs label{display:flex;align-items:center;gap:5px;cursor:pointer;}
+#tcUsuarios .pediu{font-size:10px;font-weight:700;color:#7a2e0e;background:#FCE4D6;border:1px solid #d9541e;border-radius:8px;padding:0 5px;}
+#tcUsuarios .badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:700;white-space:nowrap;}
+#tcUsuarios .b-adm{background:#D9EAF7;color:#17365D;border:1px solid #17365D;}
+#tcUsuarios .b-ok{background:#E2F0D9;color:#276024;border:1px solid #5a8a3c;}
+#tcUsuarios .b-warn{background:#FCE4D6;color:#7a2e0e;border:1px solid #d9541e;}
+#tcUsuarios .acoes{display:flex;flex-wrap:wrap;gap:4px;}
+#tcUsuarios .bt{padding:5px 11px;border-radius:5px;border:1px solid #cbd5e1;background:#f8fafc;color:#1e293b;cursor:pointer;font-size:12px;font-weight:500;}
+#tcUsuarios .bt:hover{background:#e2e8f0;}
+#tcUsuarios .nota{font-size:11.5px;color:#64748b;margin-top:10px;}
+#tcUsuarios .rol{overflow-x:auto;}`;
+  document.head.appendChild(css);
+  bg = document.createElement('div');
+  bg.id = 'tcUsuarios';
+  bg.innerHTML = '<div class="cx"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px">' +
+    '<h2>Usuários</h2><button class="bt" id="tcFechar">Fechar</button></div>' +
+    '<div class="sub">Administradores no topo, depois os cadastros pendentes. Marque em “Programas” o que cada pessoa pode usar. “Redefinir senha” envia ao e-mail da pessoa um link para criar nova senha.</div>' +
+    '<div id="tcCorpo"></div></div>';
+  document.body.appendChild(bg);
+  $('tcFechar').onclick = () => { bg.style.display = 'none'; };
+  return bg;
+}
+
+window.abrirAdmin = async function(){
+  if(!eu || !eu.admin){ aviso('Apenas o administrador pode autorizar usuários.'); return; }
+  const bg = caixaUsuarios(); bg.style.display = 'block';
+  const corpo = $('tcCorpo');
+  corpo.innerHTML = '<p style="font-size:13px;color:#475569">Carregando…</p>';
+  let lista;
+  try{ lista = await listarTodos(); }
+  catch(e){ corpo.innerHTML = '<p style="color:#7a2e0e">' + esc(traduzir(e, 'Falha ao carregar')) + '</p>'; return; }
+  const ordem = {adm: -1, pen: 0, ven: 1, ok: 2, rec: 3};
+  lista.sort((x, y) => ordem[estadoU(x)] - ordem[estadoU(y)] || (x.nome || x.usuario).localeCompare(y.nome || y.usuario));
+  const rotulo = {adm: 'Administrador', rec: 'Recusado', pen: 'Aguardando aprovação', ven: 'Licença vencida', ok: 'Ativo'};
+  const cor = {adm: 'b-adm', rec: 'b-warn', pen: 'b-warn', ven: 'b-warn', ok: 'b-ok'};
+  let h = '<div class="rol"><table><thead><tr><th>E-mail</th><th>Nome / Empresa</th><th>Programas</th><th>Validade</th><th>Situação</th><th></th></tr></thead><tbody>';
+  lista.forEach((u, i) => {
+    const e = estadoU(u);
+    const bt = (t, a) => '<button class="bt" data-i="' + i + '" data-acao="' + a + '">' + t + '</button>';
+    const redef = bt('Redefinir senha', 'redefinir');
+    if(!u.uid){
+      h += '<tr><td>' + esc(u.email) + '</td><td style="color:#94a3b8">Administrador da lista oficial</td><td style="color:#94a3b8">todos</td><td></td>' +
+           '<td><span class="badge b-adm">Administrador · nunca entrou</span></td><td><div class="acoes">' + redef + '</div></td></tr>';
+      return;
+    }
+    let acoes = '';
+    if(e === 'pen') acoes = bt('Aprovar', 'aprovar') + bt('Recusar', 'recusar');
+    else if(e === 'rec') acoes = bt('Aprovar', 'aprovar');
+    else if(e !== 'adm') acoes = bt('Bloquear', 'bloquear');
+    let progs;
+    if(e === 'adm') progs = '<span style="color:#94a3b8">todos</span>';
+    else{
+      progs = '<div class="progs">';
+      PROGRAMAS.forEach((p, k) => {
+        const pediu = pediuProg(u, p) && !u[p.campo];
+        const marc = u[p.campo] || (e === 'pen' && pediu);
+        progs += '<label><input type="checkbox" data-i="' + i + '" data-prog="' + k + '"' + (marc ? ' checked' : '') + '> ' + p.nome +
+                 (pediu ? ' <span class="pediu" title="A pessoa pediu acesso a este programa">pediu</span>' : '') + '</label>';
+      });
+      progs += '</div>';
+    }
+    const dt = u.validade ? u.validade.toISOString().slice(0, 10) : '';
+    h += '<tr' + (e === 'pen' ? ' style="background:#FCE4D6"' : '') + '><td>' + esc(u.email || u.usuario) + '</td>' +
+      '<td><input type="text" data-i="' + i + '" data-campo="nome" value="' + esc(u.nome) + '" placeholder="nome" style="width:110px"> ' +
+      '<input type="text" data-i="' + i + '" data-campo="empresa" value="' + esc(u.empresa) + '" placeholder="empresa" style="width:110px"></td>' +
+      '<td>' + progs + '</td>' +
+      '<td>' + (e === 'adm' ? '<span style="color:#94a3b8">sem prazo</span>' : '<input type="date" data-i="' + i + '" data-campo="validade" value="' + dt + '">') + '</td>' +
+      '<td><span class="badge ' + cor[e] + '">' + rotulo[e] + '</span></td>' +
+      '<td><div class="acoes">' + acoes + redef + bt('Gravar', 'gravar') + '</div></td></tr>';
+  });
+  h += '</tbody></table></div><p class="nota">Um único login por pessoa: o mesmo e-mail e senha servem para todos os programas, mas ela só abre os que estiverem marcados em “Programas”. ' +
+       'Os cadastros novos chegam sozinhos, pela tela de login de qualquer programa, já com o programa pedido marcado (“pediu”). ' +
+       '“Aprovar” libera os programas marcados (com a validade da linha, se houver); “Gravar” salva as mudanças da linha; ' +
+       '“Recusar” e “Bloquear” impedem o uso e podem ser desfeitos a qualquer momento.</p>';
+  corpo.innerHTML = h;
+
+  corpo.onclick = async ev => {
+    const b = ev.target.closest('button[data-acao]'); if(!b) return;
+    const i = +b.dataset.i, u = lista[i], ac = b.dataset.acao;
+    if(ac === 'redefinir'){
+      try{ await fb.auth.sendPasswordResetEmail(fb.a, u.email); aviso('Link de nova senha enviado para ' + u.email + '.'); }
+      catch(e){ aviso(traduzir(e, 'Não foi possível enviar')); }
+      return;
+    }
+    const val = c => { const el = corpo.querySelector('[data-i="' + i + '"][data-campo="' + c + '"]'); return el ? el.value : ''; };
+    const campos = {nome: val('nome').slice(0, 120), empresa: val('empresa').slice(0, 120)};
+    if(estadoU(u) !== 'adm'){ const v = val('validade'); campos.validade = v ? new Date(v + 'T23:59:59') : null; }
+    let marcou = false;
+    PROGRAMAS.forEach((p, k) => {
+      const cb = corpo.querySelector('input[data-i="' + i + '"][data-prog="' + k + '"]');
+      if(cb){ campos[p.campo] = cb.checked; if(cb.checked) marcou = true; }
+    });
+    if(ac === 'aprovar'){
+      if(!marcou){ aviso('Marque em “Programas” ao menos um programa para liberar.'); return; }
+      campos.recusado = false;
+    }else if(ac === 'recusar' || ac === 'bloquear'){
+      PROGRAMAS.forEach(p => { campos[p.campo] = false; });
+      if(ac === 'recusar') campos.recusado = true;
+    }
+    b.disabled = true;
+    try{
+      await fb.fs.updateDoc(fb.fs.doc(fb.d, 'usuarios', u.uid), campos);
+      await window.abrirAdmin(); contarPendentes();
+    }catch(e){ aviso(traduzir(e, 'Não foi possível salvar')); b.disabled = false; }
+  };
+};
 
 /* ---------- Início ---------- */
 function limparRestos(){
