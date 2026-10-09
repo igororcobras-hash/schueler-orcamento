@@ -6555,7 +6555,7 @@ setTimeout(inicializarBancoSco, 200);
     var sinOrig = window._sinapiImportMeta ? ('importado por você'+(window._sinapiImportMeta.importadoEm?' em '+window._sinapiImportMeta.importadoEm:'')) : 'embutido no programa';
     var scoOrig = window._scoImportMeta ? ('importado por você'+(window._scoImportMeta.importadoEm?' em '+window._scoImportMeta.importadoEm:'')) : 'embutido no programa';
     var geral = [
-      ['Versão do programa', 'V1-02-31'],
+      ['Versão do programa', 'V1-02-32'],
       ['Navegador', navegador()],
       ['Tela (largura)', window.innerWidth+' px'],
       ['Descompressão nativa (bancos embutidos)', window.DecompressionStream ? 'sim' : 'NÃO — atualize o navegador'],
@@ -9482,5 +9482,435 @@ setTimeout(inicializarBancoSco, 200);
 </script>
 <!-- FIM PATCH V1-02-31 -->
 
+
+<!-- V1-02-32: LOGIN EM NUVEM (apelido/e-mail, recuperação de senha, aprovação) -->
+<script type="module">
+/* ============================================================
+   LOGIN EM NUVEM — Schueler Orçamento Analítico (V1-02-32)
+   Substitui o login local (que ficava só no navegador) por Firebase:
+   - entra com APELIDO ou E-MAIL + senha
+   - "Esqueci minha senha": link de redefinição enviado ao e-mail
+   - cadastro com aprovação do administrador (painel dentro do programa)
+   - a mesma conta serve para os outros programas Total Civil
+   O programa NÃO traz e-mail de administrador embutido: o servidor decide.
+   ============================================================ */
+const SDK = 'https://www.gstatic.com/firebasejs/12.19.0/';
+const CFG = {
+  apiKey: 'AIzaSyDZyUlkiGAOhe4NP7PX_jaaJzcS98tldDo',
+  authDomain: 'calculadora-dnit.firebaseapp.com',
+  projectId: 'calculadora-dnit',
+  storageBucket: 'calculadora-dnit.firebasestorage.app',
+  messagingSenderId: '1003742612156',
+  appId: '1:1003742612156:web:7e27813b90a16bea715eb9'
+};
+const DOM = '@calcdnit.app';               // contas antigas do Pavimento: apelido@calcdnit.app
+const KEY = 'orcadipr_current_v12';        // sessão que o restante do programa lê
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const aviso = m => { try{ alert(m); }catch(e){} };
+
+let fb = null;            // {a, d, auth, fs}
+let eu = null;            // {uid, email, apelido, nome, admin, ativo, solicitado}
+let registrando = false;  // evita corrida entre o cadastro e o onAuthStateChanged
+let listaAdmin = [];
+
+/* ---------- Interface: troca do corpo da tela de login ---------- */
+function montarTela(){
+  const corpo = document.querySelector('#authOverlay .auth-body');
+  if(!corpo) return;
+  corpo.innerHTML = `
+    <div id="authError" class="auth-error"></div>
+    <div id="authSuccess" class="auth-success"></div>
+
+    <div id="ocCarregando" style="text-align:center;padding:18px;font-size:12px;color:#475569">Conectando ao servidor de acesso…</div>
+
+    <div id="ocFalha" style="display:none;text-align:center;padding:10px;font-size:12px;color:#7f1d1d">
+      <div id="ocFalhaMsg">Não foi possível conectar ao servidor de acesso.</div>
+      <button class="auth-btn auth-btn-primary" style="margin-top:12px" onclick="location.reload()">Tentar de novo</button>
+    </div>
+
+    <div id="ocLogin" style="display:none">
+      <label style="font-size:11px;font-weight:700">Apelido ou e-mail</label>
+      <input id="ocId" class="auth-input" placeholder="seu apelido ou seu e-mail" autocomplete="username" autocapitalize="none" spellcheck="false">
+      <label style="font-size:11px;font-weight:700">Senha</label>
+      <input id="ocSenha" type="password" class="auth-input" placeholder="••••••••" autocomplete="current-password" onkeydown="if(event.key==='Enter') ocEntrar()">
+      <button id="ocBtnEntrar" class="auth-btn auth-btn-primary" onclick="ocEntrar()">🔓 Entrar</button>
+      <div class="auth-link" onclick="ocTela('ocRec')">Esqueci minha senha</div>
+      <div class="auth-link" onclick="ocTela('ocCad')">Não tem conta? Solicitar acesso</div>
+      <div style="margin-top:14px;padding:10px;background:#f8fafc;border-radius:8px;font-size:10px;color:#64748b;text-align:center">
+        Quem já usa o Pavimento Flexível em totalcivil.com.br entra aqui com a mesma conta.
+      </div>
+    </div>
+
+    <div id="ocCad" style="display:none">
+      <label style="font-size:11px;font-weight:700">Nome completo</label>
+      <input id="ocCadNome" class="auth-input" placeholder="Ex: João Silva" autocomplete="name">
+      <label style="font-size:11px;font-weight:700">Apelido (para entrar)</label>
+      <input id="ocCadApelido" class="auth-input" placeholder="ex: joao.silva (3 a 30 letras, números . _ -)" autocomplete="username" autocapitalize="none" spellcheck="false">
+      <label style="font-size:11px;font-weight:700">E-mail (para recuperar a senha)</label>
+      <input id="ocCadEmail" type="email" class="auth-input" placeholder="voce@email.com" autocomplete="email" autocapitalize="none" spellcheck="false">
+      <label style="font-size:11px;font-weight:700">Senha</label>
+      <input id="ocCadSenha" type="password" class="auth-input" placeholder="mínimo 8 caracteres" autocomplete="new-password">
+      <label style="font-size:11px;font-weight:700">Confirme a senha</label>
+      <input id="ocCadSenha2" type="password" class="auth-input" placeholder="repita a senha" autocomplete="new-password">
+      <label style="font-size:11px;font-weight:700">Empresa / função</label>
+      <input id="ocCadEmpresa" class="auth-input" placeholder="Ex: Engenheiro - Construtora XYZ">
+      <button id="ocBtnCad" class="auth-btn auth-btn-primary" onclick="ocCadastrar()">📨 Solicitar Acesso</button>
+      <div class="auth-link" onclick="ocTela('ocLogin')">Já tem conta? Fazer login</div>
+      <div style="margin-top:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:8px;font-size:10px">
+        ⚠️ Seu cadastro fica <b>pendente</b> até o administrador autorizar.
+      </div>
+    </div>
+
+    <div id="ocRec" style="display:none">
+      <p style="font-size:11px;color:#475569;margin:0 0 8px">Informe seu e-mail (ou apelido). Enviaremos um link para criar uma nova senha.</p>
+      <label style="font-size:11px;font-weight:700">E-mail ou apelido</label>
+      <input id="ocRecId" class="auth-input" placeholder="seu e-mail ou apelido" autocomplete="username" autocapitalize="none" spellcheck="false" onkeydown="if(event.key==='Enter') ocRecuperar()">
+      <button id="ocBtnRec" class="auth-btn auth-btn-primary" onclick="ocRecuperar()">✉️ Enviar link de redefinição</button>
+      <div class="auth-link" onclick="ocTela('ocLogin')">Voltar ao login</div>
+    </div>
+
+    <div id="ocPend" style="display:none">
+      <div id="ocPendTxt" style="font-size:12px;line-height:1.5;color:#334155;margin-bottom:10px"></div>
+      <button id="ocBtnSolicitar" class="auth-btn auth-btn-primary" style="display:none" onclick="ocSolicitar()">📨 Solicitar acesso ao Orçamento</button>
+      <button class="auth-btn auth-btn-primary" style="background:#475569" onclick="ocVerificar()">🔄 Verificar novamente</button>
+      <div class="auth-link" onclick="ocSairPendente()">Sair</div>
+    </div>`;
+  const fx = $('avisoPerfilNovo'); if(fx) fx.style.display = 'none';
+}
+
+const TITULOS = {
+  ocCarregando: 'Verificando acesso…',
+  ocFalha: 'Sem conexão com o servidor de acesso',
+  ocLogin: 'Acesso restrito - Faça login',
+  ocCad: 'Solicitar acesso - Aguardará autorização do administrador',
+  ocRec: 'Recuperar senha',
+  ocPend: 'Acesso aguardando liberação'
+};
+function tela(nome){
+  ['ocCarregando','ocFalha','ocLogin','ocCad','ocRec','ocPend'].forEach(id => { const e = $(id); if(e) e.style.display = (id === nome ? 'block' : 'none'); });
+  const s = $('authHeaderSub'); if(s) s.textContent = TITULOS[nome] || '';
+  limparMsg();
+  $('authOverlay').style.display = 'flex';
+}
+window.ocTela = tela;
+window.mostrarLogin = () => tela('ocLogin');
+window.mostrarCadastro = () => tela('ocCad');
+function erro(m){ tela_msg(m, false); }
+function ok(m){ tela_msg(m, true); }
+function tela_msg(m, bom){
+  const e = $('authError'), s = $('authSuccess');
+  if(!e || !s) return;
+  e.style.display = 'none'; s.style.display = 'none';
+  const alvo = bom ? s : e; alvo.textContent = m; alvo.style.display = 'block';
+}
+function ocupado(id, sim, txt){ const b = $(id); if(!b) return; if(sim){ b.dataset.t = b.textContent; b.textContent = txt || 'Aguarde…'; b.disabled = true; } else { b.textContent = b.dataset.t || b.textContent; b.disabled = false; } }
+
+/* ---------- Firebase ---------- */
+async function iniciar(){
+  try{
+    const [{initializeApp}, auth, fs] = await Promise.all([
+      import(SDK + 'firebase-app.js'), import(SDK + 'firebase-auth.js'), import(SDK + 'firebase-firestore.js')
+    ]);
+    const app = initializeApp(CFG);
+    const a = auth.getAuth(app);
+    try{ a.languageCode = 'pt'; }catch(e){}            // e-mail de redefinição em português
+    const d = fs.getFirestore(app);
+    await auth.setPersistence(a, auth.browserLocalPersistence).catch(() => {});
+    fb = {a, d, auth, fs};
+    auth.onAuthStateChanged(a, u => { if(registrando) return; aoMudarSessao(u); });
+  }catch(e){
+    $('ocFalhaMsg').textContent = 'Não foi possível conectar ao servidor de acesso. Verifique a internet e tente de novo.';
+    tela('ocFalha');
+  }
+}
+
+function traduzir(e, padrao){
+  const c = (e && e.code) || '';
+  if(/invalid-credential|wrong-password|user-not-found|invalid-email/.test(c)) return 'Apelido/e-mail ou senha incorretos.';
+  if(/too-many-requests/.test(c)) return 'Muitas tentativas. Aguarde alguns minutos e tente de novo.';
+  if(/network/.test(c)) return 'Sem conexão com o servidor. Verifique a internet.';
+  if(/unauthorized-domain/.test(c)) return 'Este endereço não está autorizado no Firebase (Authentication › Settings › Authorized domains).';
+  if(/operation-not-allowed/.test(c)) return 'Login por e-mail e senha não está ativado no Firebase.';
+  if(/email-already-in-use/.test(c)) return 'Este e-mail já tem conta. Use "Entrar" (é a mesma conta do Pavimento Flexível) ou "Esqueci minha senha".';
+  if(/weak-password/.test(c)) return 'Senha fraca. Use ao menos 8 caracteres.';
+  if(/permission-denied|insufficient/.test(c + ' ' + ((e && e.message) || ''))) return 'Permissão negada pelo servidor. Verifique se as regras do Firestore foram publicadas.';
+  return (padrao || 'Falha') + ((e && e.message) ? ' (' + e.message + ')' : '');
+}
+
+const apelidoOk = s => /^[a-z0-9][a-z0-9._-]{2,29}$/.test(s);
+const emailOk = s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+
+/* apelido -> e-mail (consulta pública apenas por get; não há listagem) */
+async function resolverEmail(id){
+  id = String(id || '').trim().toLowerCase();
+  if(id.indexOf('@') >= 0) return id;
+  const {d, fs} = fb;
+  try{
+    const s = await fs.getDoc(fs.doc(d, 'apelidos', id));
+    if(s.exists() && s.data() && s.data().email) return String(s.data().email).toLowerCase();
+  }catch(e){}
+  return id + DOM;                      // contas antigas do Pavimento
+}
+
+/* ---------- Entrar ---------- */
+window.ocEntrar = async function(){
+  if(!fb) return;
+  const id = $('ocId').value.trim(), senha = $('ocSenha').value;
+  if(!id || !senha){ erro('Informe apelido (ou e-mail) e senha.'); return; }
+  ocupado('ocBtnEntrar', true, 'Entrando…'); limparMsg();
+  try{
+    const email = await resolverEmail(id);
+    await fb.auth.signInWithEmailAndPassword(fb.a, email, senha);   // o resto segue em aoMudarSessao
+  }catch(e){ erro(traduzir(e, 'Não foi possível entrar')); }
+  ocupado('ocBtnEntrar', false);
+};
+
+/* ---------- Recuperar senha ---------- */
+window.ocRecuperar = async function(){
+  if(!fb) return;
+  const id = $('ocRecId').value.trim();
+  if(!id){ erro('Informe seu e-mail ou apelido.'); return; }
+  ocupado('ocBtnRec', true, 'Enviando…'); limparMsg();
+  try{
+    const email = await resolverEmail(id);
+    if(email.slice(-DOM.length) === DOM){
+      erro('Esta conta foi criada sem e-mail real, então não há para onde enviar o link. Peça ao administrador para redefinir a senha.');
+    }else{
+      try{ await fb.auth.sendPasswordResetEmail(fb.a, email); }
+      catch(e){ if(/network|too-many|unauthorized-domain|invalid-email/.test((e && e.code) || '')) throw e; }
+      ok('Se existir uma conta com esse e-mail, enviamos o link para criar uma nova senha. Confira também a caixa de spam.');
+    }
+  }catch(e){ erro(traduzir(e, 'Não foi possível enviar o e-mail')); }
+  ocupado('ocBtnRec', false);
+};
+
+/* ---------- Cadastro ---------- */
+window.ocCadastrar = async function(){
+  if(!fb) return;
+  const nome = $('ocCadNome').value.trim(), nick = $('ocCadApelido').value.trim().toLowerCase();
+  const email = $('ocCadEmail').value.trim().toLowerCase();
+  const s1 = $('ocCadSenha').value, s2 = $('ocCadSenha2').value, emp = $('ocCadEmpresa').value.trim();
+  if(!nome || !nick || !email || !s1){ erro('Preencha nome, apelido, e-mail e senha.'); return; }
+  if(!apelidoOk(nick)){ erro('Apelido inválido: use de 3 a 30 caracteres (letras minúsculas, números, ponto, hífen ou sublinhado), sem espaços.'); return; }
+  if(!emailOk(email)){ erro('E-mail inválido.'); return; }
+  if(s1.length < 8){ erro('A senha deve ter ao menos 8 caracteres.'); return; }
+  if(s1 !== s2){ erro('As senhas não conferem.'); return; }
+  ocupado('ocBtnCad', true, 'Enviando…'); limparMsg();
+  const {a, d, auth, fs} = fb;
+  let cred = null;
+  registrando = true;
+  try{
+    const ja = await fs.getDoc(fs.doc(d, 'apelidos', nick));
+    if(ja.exists()){ erro('Este apelido já está em uso. Escolha outro.'); registrando = false; ocupado('ocBtnCad', false); return; }
+    cred = await auth.createUserWithEmailAndPassword(a, email, s1);
+    const uid = cred.user.uid;
+    await fs.setDoc(fs.doc(d, 'apelidos', nick), {email: email, uid: uid, criadoEm: fs.serverTimestamp()});
+    await fs.setDoc(fs.doc(d, 'usuarios', uid), {
+      usuario: nick, email: email, nome: nome.slice(0, 120), empresa: emp.slice(0, 120),
+      ativo: false, admin: false, recusado: false, validade: null,
+      orcamentoSolicitado: true, orcamentoAtivo: false, criadoEm: fs.serverTimestamp()
+    });
+    registrando = false;
+    await aoMudarSessao(a.currentUser);
+  }catch(e){
+    registrando = false;
+    if(cred && cred.user){ try{ await auth.deleteUser(cred.user); }catch(_){ try{ await auth.signOut(a); }catch(__){} } }
+    erro(traduzir(e, 'Não foi possível concluir o cadastro'));
+  }
+  registrando = false;
+  ocupado('ocBtnCad', false);
+};
+
+/* ---------- Sessão ---------- */
+async function souAdmin(){
+  try{ await fb.fs.getDocs(fb.fs.query(fb.fs.collection(fb.d, 'usuarios'), fb.fs.limit(1))); return true; }
+  catch(e){ return false; }                     // só o administrador consegue listar usuários
+}
+
+async function aoMudarSessao(u){
+  if(!u){
+    eu = null;
+    try{ localStorage.removeItem(KEY); }catch(e){}
+    const b = $('userBadge'); if(b) b.remove();
+    tela('ocLogin');
+    return;
+  }
+  try{
+    const {d, fs} = fb;
+    const ref = fs.doc(d, 'usuarios', u.uid);
+    let snap = await fs.getDoc(ref);
+    if(!snap.exists()){                         // conta criada em outro programa, sem perfil ainda
+      const nick = String(u.email || '').split('@')[0];
+      await fs.setDoc(ref, {usuario: nick, email: u.email || '', nome: '', empresa: '', ativo: false, admin: false,
+        recusado: false, validade: null, orcamentoSolicitado: false, orcamentoAtivo: false, criadoEm: fs.serverTimestamp()});
+      snap = await fs.getDoc(ref);
+    }
+    const p = snap.data() || {};
+    const admin = await souAdmin();
+    eu = {uid: u.uid, email: u.email || '', apelido: p.usuario || String(u.email || '').split('@')[0],
+          nome: p.nome || '', admin: admin, ativo: p.orcamentoAtivo === true, solicitado: p.orcamentoSolicitado === true};
+  }catch(e){
+    eu = null;
+    $('ocFalhaMsg').textContent = traduzir(e, 'Não foi possível ler seu cadastro');
+    tela('ocFalha');
+    return;
+  }
+  if(eu.admin || eu.ativo){ liberar(); return; }
+  // sem liberação
+  try{ localStorage.removeItem(KEY); }catch(e){}
+  $('ocPendTxt').innerHTML = eu.solicitado
+    ? 'Olá, <b>' + esc(eu.nome || eu.apelido) + '</b>. Sua solicitação foi enviada e está <b>aguardando autorização</b> do administrador. Quando for liberada, clique em "Verificar novamente".'
+    : 'Olá, <b>' + esc(eu.nome || eu.apelido) + '</b>. Sua conta existe, mas ainda não tem acesso ao <b>Orçamento</b>. Clique abaixo para solicitar a liberação.';
+  $('ocBtnSolicitar').style.display = eu.solicitado ? 'none' : 'block';
+  tela('ocPend');
+}
+
+function liberar(){
+  const sessao = {username: eu.apelido, nome: eu.nome || eu.apelido, role: eu.admin ? 'ADMIN' : 'USER', uid: eu.uid, loginEm: new Date().toISOString()};
+  try{ localStorage.setItem(KEY, JSON.stringify(sessao)); }catch(e){}
+  $('authOverlay').style.display = 'none';
+  try{ aplicarUsuarioLogado(); }catch(e){}
+  try{ if(typeof dbAdd === 'function') dbAdd('versions', {ts: new Date().toISOString(), user: sessao.nome, username: sessao.username, role: sessao.role,
+        orcId: null, orcNome: '', bdi: 0, totalItens: 0, totalSemBDI: 0, resumo: '🔑 Login realizado', orc: []}).catch(() => {}); }catch(e){}
+  if(eu.admin) contarPendentes();
+}
+
+window.ocSolicitar = async function(){
+  if(!fb || !eu) return;
+  try{
+    await fb.fs.updateDoc(fb.fs.doc(fb.d, 'usuarios', eu.uid), {orcamentoSolicitado: true});
+    await aoMudarSessao(fb.a.currentUser);
+    ok('Solicitação enviada.');
+  }catch(e){ erro(traduzir(e, 'Não foi possível enviar a solicitação')); }
+};
+window.ocVerificar = async function(){ if(fb && fb.a.currentUser){ await aoMudarSessao(fb.a.currentUser); } };
+window.ocSairPendente = async function(){ try{ await fb.auth.signOut(fb.a); }catch(e){} };
+
+window.fazerLogout = async function(){
+  if(!confirm('Sair do sistema?')) return;
+  try{ if(typeof registrarVersaoPendente === 'function') window.registrarVersaoPendente(); }catch(e){}
+  try{
+    const cur = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if(cur && typeof dbAdd === 'function'){
+      await dbAdd('versions', {ts: new Date().toISOString(), user: cur.nome || cur.username, username: cur.username, role: cur.role,
+        orcId: null, orcNome: '', bdi: 0, totalItens: 0, totalSemBDI: 0, resumo: '🚪 Logout realizado', orc: []});
+    }
+  }catch(e){}
+  try{ localStorage.removeItem(KEY); }catch(e){}
+  try{ if(fb) await fb.auth.signOut(fb.a); }catch(e){}
+  location.reload();
+};
+
+/* ---------- Painel do administrador (Firestore) ---------- */
+async function carregarLista(){
+  const {d, fs} = fb;
+  const snap = await fs.getDocs(fs.query(fs.collection(d, 'usuarios'), fs.limit(500)));
+  listaAdmin = snap.docs.map(x => {
+    const v = x.data() || {};
+    return {uid: x.id, apelido: v.usuario || '', email: v.email || '', nome: v.nome || '', empresa: v.empresa || '',
+            ativo: v.orcamentoAtivo === true, solicitado: v.orcamentoSolicitado === true,
+            admin: v.admin === true, criadoEm: v.criadoEm && v.criadoEm.toDate ? v.criadoEm.toDate() : (v.criadoEm instanceof Date ? v.criadoEm : null)};
+  }).sort((p, q) => (p.apelido || '').localeCompare(q.apelido || ''));
+  return listaAdmin;
+}
+async function contarPendentes(){
+  try{
+    const l = await carregarLista();
+    const n = l.filter(x => x.solicitado && !x.ativo).length;
+    const b = $('btnAdminPanel'); if(b) b.textContent = '👥 Usuários' + (n ? ' (' + n + ' pendente' + (n > 1 ? 's' : '') + ')' : '');
+  }catch(e){}
+}
+window.atualizarContadoresAdmin = function(){};
+
+window.abrirAdmin = function(){
+  if(!eu || !eu.admin){ aviso('Apenas o administrador pode autorizar usuários.'); return; }
+  $('adminPanel').style.display = 'flex';
+  window.renderAdmin('pendentes');
+};
+
+window.renderAdmin = async function(filtro){
+  filtro = filtro || 'pendentes';
+  const tb = $('tbodyAdmin');
+  tb.innerHTML = '<tr><td colspan="6"><div class="empty">Carregando…</div></td></tr>';
+  let l;
+  try{ l = await carregarLista(); }
+  catch(e){ tb.innerHTML = '<tr><td colspan="6"><div class="empty">' + esc(traduzir(e, 'Falha ao carregar')) + '</div></td></tr>'; return; }
+  const pend = l.filter(x => x.solicitado && !x.ativo), aprov = l.filter(x => x.ativo);
+  $('countPend').textContent = pend.length; $('countAprov').textContent = aprov.length;
+  const lista = filtro === 'pendentes' ? pend : filtro === 'aprovados' ? aprov : l;
+  if(!lista.length){ tb.innerHTML = '<tr><td colspan="6"><div class="empty">Nenhum usuário nesta lista</div></td></tr>'; return; }
+  tb.innerHTML = lista.map(u => {
+    const estado = u.ativo ? '<span class="badge-A">APROVADO</span>'
+      : u.solicitado ? '<span class="badge" style="background:#fef3c7;color:#92400e">PENDENTE</span>'
+      : '<span class="badge" style="background:#e2e8f0;color:#475569">SEM PEDIDO</span>';
+    const acoes = (!u.ativo ? '<button class="btn btn-primary" style="padding:3px 6px;font-size:9px" data-ac="aut" data-uid="' + esc(u.uid) + '">✅ Autorizar</button> ' : '')
+      + (u.solicitado && !u.ativo ? '<button class="btn btn-dark" style="padding:3px 6px;font-size:9px;background:#ef4444" data-ac="rej" data-uid="' + esc(u.uid) + '">✕ Rejeitar</button>' : '')
+      + (u.ativo && !u.admin ? '<button class="btn btn-ghost" style="padding:2px 4px;font-size:8px;color:#ef4444" data-ac="blq" data-uid="' + esc(u.uid) + '">Bloquear</button>' : '');
+    return '<tr style="' + (u.solicitado && !u.ativo ? 'background:#fffbeb' : '') + '">'
+      + '<td style="font-family:monospace;font-weight:700">' + esc(u.apelido) + (u.admin ? ' <span style="background:#0f172a;color:white;padding:1px 4px;border-radius:8px;font-size:8px">ADMIN</span>' : '')
+      + '<div style="font-family:system-ui;font-weight:400;font-size:9px;color:#64748b">' + esc(u.email) + '</div></td>'
+      + '<td>' + esc(u.nome) + '</td>'
+      + '<td style="font-size:9px;max-width:120px;overflow:hidden">' + esc(u.empresa) + '</td>'
+      + '<td style="font-size:9px">' + (u.criadoEm ? u.criadoEm.toLocaleDateString('pt-BR') : '') + '</td>'
+      + '<td>' + estado + '</td>'
+      + '<td style="display:flex;gap:3px;flex-wrap:wrap">' + acoes + '</td></tr>';
+  }).join('');
+  tb.dataset.filtro = filtro;
+};
+
+async function acao(uid, campos, msg){
+  try{
+    await fb.fs.updateDoc(fb.fs.doc(fb.d, 'usuarios', uid), campos);
+    const f = $('tbodyAdmin').dataset.filtro || 'pendentes';
+    await window.renderAdmin(f); contarPendentes();
+    if(msg && typeof mostrarSucessoAdmin === 'function') mostrarSucessoAdmin(msg);
+  }catch(e){ aviso(traduzir(e, 'Não foi possível salvar')); }
+}
+window.aprovarUsuario = () => {};
+window.rejeitarUsuario = () => {};
+window.bloquearUsuario = () => {};
+window.removerUsuario = () => {};
+window.tornarAdmin = () => {};
+window.gerarCodigoNovamente = () => {};
+window.importarELogar = () => {};
+window.importarSolic = () => {};
+window.criarUsuarioAdmin = function(){
+  aviso('Peça para a pessoa abrir o endereço do Orçamento e usar "Solicitar acesso". Depois ela aparece em "Pendentes" para você autorizar.');
+};
+
+function ligarPainel(){
+  const tb = $('tbodyAdmin');
+  if(tb) tb.addEventListener('click', ev => {
+    const b = ev.target.closest('button[data-ac]'); if(!b) return;
+    const uid = b.dataset.uid, u = listaAdmin.find(x => x.uid === uid); if(!u) return;
+    const nome = u.apelido || u.email;
+    if(b.dataset.ac === 'aut') acao(uid, {orcamentoAtivo: true, orcamentoSolicitado: true}, '✅ ' + nome + ' autorizado.');
+    else if(b.dataset.ac === 'rej'){ if(confirm('Rejeitar a solicitação de ' + nome + '?')) acao(uid, {orcamentoSolicitado: false, orcamentoAtivo: false}, 'Solicitação de ' + nome + ' rejeitada.'); }
+    else if(b.dataset.ac === 'blq'){ if(confirm('Bloquear o acesso de ' + nome + ' ao Orçamento?')) acao(uid, {orcamentoAtivo: false}, nome + ' bloqueado.'); }
+  });
+  const rod = document.querySelector('#adminPanel .admin-box > div:last-child');
+  if(rod) rod.innerHTML = 'Apenas administradores definidos no servidor podem autorizar. O acesso vale só para o <b>Orçamento</b>; os outros programas têm liberação própria.';
+  const cab = document.querySelector('#adminPanel .admin-box > div:first-child > div > div:last-child');
+  if(cab) cab.textContent = 'Você autoriza quem pode usar o Orçamento';
+}
+
+/* ---------- Início ---------- */
+function limparRestos(){
+  ['areaCodigo', 'areaSolicCodigo', 'alertPend'].forEach(id => { const e = $(id); if(e) e.remove(); });
+}
+function inicio(){
+  montarTela(); ligarPainel(); limparRestos();
+  try{ localStorage.removeItem(KEY); }catch(e){}   // a sessão local antiga deixa de valer
+  const b = $('userBadge'); if(b) b.remove();
+  tela('ocCarregando');
+  iniciar();
+}
+if(document.readyState === 'loading'){
+  document.addEventListener('DOMContentLoaded', () => { inicio(); limparRestos(); });
+}else{ inicio(); }
+document.addEventListener('DOMContentLoaded', limparRestos);
+
+</script>
 </body>
 </html>
