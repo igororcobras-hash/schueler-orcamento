@@ -7,6 +7,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Schueler Orçamento Analítico</title>
 <script>
+// Cache-bust: força o navegador a buscar sempre a versão mais recente
+// Versão do build — atualizada a cada deploy
+var BUILD_VERSION = "20261014-1335";
+if(!window.location.search.includes('v='+BUILD_VERSION)){
+  var sep = window.location.search ? '&' : '?';
+  window.location.replace(window.location.pathname + sep + 'v=' + BUILD_VERSION + window.location.hash);
+}
+</script>
+<script>
 // V1-02-18: guarda os erros que acontecem desde a abertura, para o botão "🩺 Diagnóstico COMP"
 window._errosDiag = [];
 (function(){
