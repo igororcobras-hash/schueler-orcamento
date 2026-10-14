@@ -3962,24 +3962,24 @@ window.ajustarQtdCotacoes=function(){
   if(isNaN(qtd) || qtd<4) qtd=4;
   if(qtd>8) qtd=8;
   // preserva valores já digitados até o novo tamanho
-  var valoresAntigos=[], fontesAntigas=[], atasAntigas=[];
+  var valoresAntigos=[], fontesAntigas=[], tiposAntigos=[];
   for(var i=0;i<cont.children.length;i++){
     var inp=document.getElementById('cot_'+i);
     var fonteEl=document.getElementById('cot_fonte_'+i);
-    var ataEl=document.getElementById('cot_ata_'+i);
+    var tipoEl=document.getElementById('cot_tipo_'+i);
     valoresAntigos.push(inp?inp.value:'');
     fontesAntigas.push(fonteEl?fonteEl.value:'');
-    atasAntigas.push(ataEl?ataEl.checked:false);
+    tiposAntigos.push(tipoEl?tipoEl.value:'mercado');
   }
   cont.innerHTML='';
   for(var j=0;j<qtd;j++){ addCotacaoLinha(); }
   for(var k=0;k<qtd;k++){
     var inp2=document.getElementById('cot_'+k);
     var fonteEl2=document.getElementById('cot_fonte_'+k);
-    var ataEl2=document.getElementById('cot_ata_'+k);
+    var tipoEl2=document.getElementById('cot_tipo_'+k);
     if(inp2 && valoresAntigos[k]) inp2.value=valoresAntigos[k];
     if(fonteEl2 && fontesAntigas[k]) fonteEl2.value=fontesAntigas[k];
-    if(ataEl2 && atasAntigas[k]) ataEl2.checked=true;
+    if(tipoEl2 && tiposAntigos[k]) tipoEl2.value=tiposAntigos[k];
   }
 };
 window.addCotacaoLinha=function(){
@@ -3989,7 +3989,16 @@ window.addCotacaoLinha=function(){
   var idx=cont.children.length;
   var div=document.createElement('div');
   div.style.display='flex'; div.style.gap='4px'; div.style.alignItems='center';
-  div.innerHTML='<label style="font-size:9px">C'+(idx+1)+':</label><input type="text" inputmode="decimal" id="cot_'+idx+'" placeholder="R$ 0,00" style="flex:1;padding:4px 6px;border:1px solid #f59e0b;border-radius:6px;font-size:10px" oninput="calcularQuartisLive()"><input type="text" id="cot_fonte_'+idx+'" placeholder="Fonte/Loja" style="flex:1;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:9px"><label title="Preço de Ata de Registro de Preços ou Contrato vigente — não será excluído como outlier (IN SEGES/ME 65/2021)" style="display:flex;align-items:center;gap:2px;font-size:8px;color:#6366f1;white-space:nowrap;cursor:pointer"><input type="checkbox" id="cot_ata_'+idx+'" style="accent-color:#6366f1;width:12px;height:12px"> Ata/Contrato</label>';
+  div.innerHTML='<label style="font-size:9px">C'+(idx+1)+':</label>'
+    +'<input type="text" inputmode="decimal" id="cot_'+idx+'" placeholder="R$ 0,00" style="width:90px;flex:none;padding:4px 6px;border:1px solid #f59e0b;border-radius:6px;font-size:10px" oninput="calcularQuartisLive()">'
+    +'<input type="text" id="cot_fonte_'+idx+'" placeholder="Descrição/Fornecedor" style="flex:1;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:9px">'
+    +'<select id="cot_tipo_'+idx+'" title="Tipo de fonte — Ata/Contrato nunca é excluída como outlier (IN SEGES/ME 65/2021, art. 6º)" style="padding:3px 4px;border:1px solid #a5b4fc;border-radius:6px;font-size:8px;color:#3730a3;background:#eef2ff;font-weight:700;cursor:pointer">'
+    +'<option value="mercado">🏪 Mercado</option>'
+    +'<option value="painel">🏛️ Painel Preços</option>'
+    +'<option value="nfe">🧾 NF-e</option>'
+    +'<option value="similar">📋 Contrat. Similar</option>'
+    +'<option value="ata" style="color:#4f46e5;background:#ede9fe">🔒 Ata/Contrato</option>'
+    +'</select>';
   cont.appendChild(div);
 };
 window.limparCotacao=function(){ var c=document.getElementById('cotacaoInputs'); if(c) c.innerHTML=''; initCotInputs(); document.getElementById('cotacaoResultado').innerHTML=''; var box=document.getElementById('cotacaoNovoItemBox'); if(box) box.style.display='none'; window._ultimaCotacaoDados=null; };
@@ -4022,10 +4031,13 @@ window.calcularQuartis=function(){
     } else {
       v=String(inp.value).replace(',','.').replace('R$','').trim();
     }
+    var tipoEl=document.getElementById('cot_tipo_'+i);
+    // compatibilidade retroativa com checkbox antigo
     var ataEl=document.getElementById('cot_ata_'+i);
-    var isAta = ataEl ? ataEl.checked : false;
+    var tipo = tipoEl ? tipoEl.value : (ataEl && ataEl.checked ? 'ata' : 'mercado');
+    var isAta = tipo === 'ata';
     var n=parseFloat(v);
-    if(!isNaN(n) && n>0){ vals.push({v:n, f:(fonteEl?fonteEl.value:'Fonte '+(i+1)), ata:isAta}); }
+    if(!isNaN(n) && n>0){ vals.push({v:n, f:(fonteEl?fonteEl.value:'Fonte '+(i+1)), ata:isAta, tipo:tipo}); }
   }
   if(vals.length<3){ document.getElementById('cotacaoResultado').innerHTML='<div style="color:#dc2626;font-size:10px">Insira pelo menos 3 preços válidos</div>'; return; }
   var sorted=vals.slice().sort(function(a,b){return a.v-b.v;});
@@ -4070,10 +4082,22 @@ window.calcularQuartis=function(){
   html+='<table class="cot-table" style="margin-top:10px"><thead><tr><th>PREÇO</th><th>STATUS</th><th>FONTE</th></tr></thead><tbody>';
   sorted.forEach(function(o){
     var isOut = !o.ata && (o.v<limInf || o.v>limSup);
-    var statusLabel = o.ata
-      ? '<span style="background:#6366f1;color:white;padding:2px 6px;border-radius:10px;font-size:8px">ATA/CONTRATO</span>'
-      : (isOut ? '<span style="background:#ef4444;color:white;padding:2px 6px;border-radius:10px;font-size:8px">OUTLIER</span>' : '<span style="background:#22c55e;color:white;padding:2px 6px;border-radius:10px;font-size:8px">VÁLIDO</span>');
-    html+='<tr class="'+(isOut?'outlier':'valido')+'"><td>R$ '+o.v.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</td><td>'+statusLabel+'</td><td style="font-size:9px">'+o.f+(o.ata?' [Ata/Contrato]':'')+'</td></tr>';
+    var tipoLabels = {
+      ata:     {bg:'#4f46e5', txt:'white', label:'🔒 ATA/CONTRATO'},
+      painel:  {bg:'#0369a1', txt:'white', label:'🏛️ PAINEL PREÇOS'},
+      nfe:     {bg:'#0f766e', txt:'white', label:'🧾 NF-e'},
+      similar: {bg:'#7c3aed', txt:'white', label:'📋 CONT. SIMILAR'},
+      mercado: {bg:'#16a34a', txt:'white', label:'🏪 MERCADO'}
+    };
+    var tl = tipoLabels[o.tipo||'mercado'] || tipoLabels.mercado;
+    var fonteTag = '<span style="background:'+tl.bg+';color:'+tl.txt+';padding:2px 5px;border-radius:10px;font-size:8px;font-weight:700">'+tl.label+'</span>';
+    var statusTag = o.ata
+      ? ''
+      : (isOut
+        ? ' <span style="background:#ef4444;color:white;padding:2px 5px;border-radius:10px;font-size:8px;font-weight:700">EXCLUÍDO</span>'
+        : ' <span style="background:#22c55e;color:white;padding:2px 5px;border-radius:10px;font-size:8px;font-weight:700">VÁLIDO</span>');
+    var ataNota = o.ata ? ' <span style="font-size:8px;color:#6366f1" title="IN SEGES/ME 65/2021, art. 6º — preço de Ata/Contrato não é excluído como outlier">✓ não excluído</span>' : '';
+    html+='<tr class="'+(isOut?'outlier':'valido')+'"><td>R$ '+o.v.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</td><td>'+fonteTag+statusTag+ataNota+'</td><td style="font-size:9px">'+o.f+'</td></tr>';
   });
   html+='</tbody></table>';
   html+='<div id="cotacaoAcoesEscolha" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
