@@ -920,7 +920,7 @@ function mostrarSelecaoAmbiente(){ if (!_ambienteEscolhido) abrirSelecaoAmbiente
   <button class="btn btn-dark" onclick="atualizarDataBaseTodos()">Atualizar Base Todos</button>
   <span style="width:1px;align-self:stretch;background:#cbd5e1;margin:0 2px"></span>
   <button class="btn" style="background:#f97316;color:white;font-weight:800" onclick="abrirModalComp()">🧩 Criar Composição</button><button class="btn btn-ghost v28-oculto" style="border:1px solid #26c6da" onclick="abrirConsolidacao()">📊 Consolidação</button>
-  <button class="btn btn-ghost" style="border:1px solid #f59e0b" onclick="abrirModalCotacaoGeral()">📈 Cotação Quartis</button>
+  <button class="btn btn-ghost" style="border:1px solid #f59e0b" onclick="abrirModalCotacaoGeral()">📈 Cotação Saneamento</button>
   <button class="btn btn-ghost" style="border:1px solid #7c3aed" onclick="abrirModalHistorico()">🕘 Histórico / Auditoria</button>
   <button class="btn btn-ghost" id="btnBackupPasta" style="border:1px solid #16a34a" onclick="configurarBackupPasta()">📁 Backup Automático</button>
   <span id="statusBackupPasta" style="font-size:8px;color:#64748b"></span>
@@ -4176,19 +4176,19 @@ window.escolherCriterioCotacao=function(tipo){
   if(bMediana){ bMediana.style.background = tipo==='MEDIANA' ? '#0f172a' : '#f1f5f9'; bMediana.style.color = tipo==='MEDIANA' ? 'white' : '#0f172a'; bMediana.style.border = tipo==='MEDIANA' ? '2px solid #0f172a' : '2px solid #cbd5e1'; }
 };
 window.aplicarMedianaCotacao=function(valorForcado){
-  if(!window._ultimaCotacaoDados){ alert('Calcule a cotação (Calcular Quartis) antes de aplicar.'); return; }
+  if(!window._ultimaCotacaoDados){ alert('Calcule a cotação (Calcular Saneamento) antes de aplicar.'); return; }
   var dados = window._ultimaCotacaoDados;
   var valor = (typeof valorForcado==='number') ? valorForcado : dados.valorEscolhido;
   var rotuloCriterio = dados.escolha==='MEDIA' ? 'Média Saneada' : 'Mediana Saneada';
   if(typeof mercadoEditId!=='undefined' && mercadoEditId){
     var o=orc.find(function(x){return x.id===mercadoEditId;});
-    if(o){ o.mercado=valor; o.mercado_loja=rotuloCriterio+' (Quartis 25/75%)'; o.mercado_data=new Date().toISOString().slice(0,10); if(typeof saveOrc==='function') saveOrc(); if(typeof renderOrc==='function') renderOrc(); alert('Aplicado R$ '+valor.toLocaleString('pt-BR',{minimumFractionDigits:2})+' ('+rotuloCriterio+') ao item '+o.codigo); fecharModalCotacaoGeral(); }
+    if(o){ o.mercado=valor; o.mercado_loja=rotuloCriterio+' (Saneamento 75%/125%)'; o.mercado_data=new Date().toISOString().slice(0,10); if(typeof saveOrc==='function') saveOrc(); if(typeof renderOrc==='function') renderOrc(); alert('Aplicado R$ '+valor.toLocaleString('pt-BR',{minimumFractionDigits:2})+' ('+rotuloCriterio+') ao item '+o.codigo); fecharModalCotacaoGeral(); }
   } else {
     alert(rotuloCriterio+' calculada: R$ '+valor.toLocaleString('pt-BR',{minimumFractionDigits:2})+'\nSelecione um item com "Buscar Mercado" para aplicar, ou use o formulário abaixo para inserir um item NOVO no orçamento.');
   }
 };
 window.inserirItemMercadoNoOrcamento=function(){
-  if(!window._ultimaCotacaoDados){ alert('Calcule a cotação (Calcular Quartis) antes de inserir o item.'); return; }
+  if(!window._ultimaCotacaoDados){ alert('Calcule a cotação (Calcular Saneamento) antes de inserir o item.'); return; }
   var descr = (document.getElementById('cotNovoDescr')||{}).value || '';
   descr = descr.trim();
   if(!descr){ alert('Informe a descrição do item.'); return; }
@@ -4210,7 +4210,7 @@ window.inserirItemMercadoNoOrcamento=function(){
     custo: valor,
     bdi: (window.bdiConfig?window.bdiConfig.principal:0) || 0,
     mercado: valor,
-    mercado_loja: rotuloCriterio+' Quartis 25/75% ('+dados.validos.length+'/'+(dados.validos.length+dados.outliers.length)+' válidos, CV '+dados.cv.toFixed(1)+'%)',
+    mercado_loja: rotuloCriterio+' Saneamento 75%/125% ('+dados.validos.length+'/'+(dados.validos.length+dados.outliers.length)+' válidos, CV '+dados.cv.toFixed(1)+'%)',
     mercado_data: dados.data,
     cotacao_fontes: dados.fontes,
     cotacao_valores: dados.valores,
@@ -4252,7 +4252,7 @@ window.carregarCacheCotacoesSalvas=function(){
   }).catch(function(){ return window._cotacoesSalvasCache; });
 };
 window.salvarCalculoCotacao=function(){
-  if(!window._ultimaCotacaoDados){ alert('Calcule a cotação (Calcular Quartis) antes de salvar.'); return; }
+  if(!window._ultimaCotacaoDados){ alert('Calcule a cotação (Calcular Saneamento) antes de salvar.'); return; }
   if(!window.SchuelerDB){ alert('Armazenamento local (IndexedDB) indisponível neste navegador.'); return; }
   var dados = window._ultimaCotacaoDados;
   var info = (typeof orcamentoAtualInfo==='function') ? orcamentoAtualInfo() : {orcId:null, orcNome:''};
@@ -4329,7 +4329,7 @@ window.exportarCalculoCotacaoIndividual=function(id){
     ['Usuário', c.usuario||''],
     ['Q1 (25%)', Number(c.q1)||0],
     ['Q3 (75%)', Number(c.q3)||0],
-    ['IQR', Number(c.iqr)||0],
+    ['Lim. Inf. (75%)', Number(c.limInf)||0],
     ['Limite Inferior', Number(c.limInf)||0],
     ['Limite Superior', Number(c.limSup)||0],
     ['Coeficiente de Variação (CV)', (Number(c.cv)||0).toFixed(2)+'%'],
