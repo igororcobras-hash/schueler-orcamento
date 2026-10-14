@@ -3684,7 +3684,7 @@ new MutationObserver(function(muts){
 <div class="modal-quartil" id="modalQuartil">
   <div class="modal-quartil-box">
     <div style="padding:10px 14px;background:#0f172a;color:white;display:flex;justify-content:space-between;align-items:center">
-      <b>📈 COTAÇÃO - Método Quartis (25% / 75%) - Detecção Outliers</b>
+      <b>📈 COTAÇÃO - Método Saneamento 75% / 125% (IN SEGES/ME 65/2021)</b>
       <button class="btn btn-dark" onclick="fecharModalCotacaoGeral()">✕</button>
     </div>
     <div style="padding:10px">
@@ -3697,11 +3697,11 @@ new MutationObserver(function(muts){
           <option value="7">7</option>
           <option value="8">8</option>
         </select>
-        <span style="color:#64748b">Sistema calcula Q1(25%), Q3(75%), IQR, limites e mediana saneada.</span>
+        <span style="color:#64748b">Exclui inexequíveis (&lt;75%) e excessivos (&gt;125%) da média iterativa. Ata/Contrato nunca excluída.</span>
       </div>
       <div id="cotacaoInputs" style="display:flex;flex-direction:column;gap:5px"></div>
       <div style="margin-top:8px;display:flex;gap:6px">
-        <button class="btn btn-dark" onclick="calcularQuartis()">Calcular Quartis</button>
+        <button class="btn btn-dark" onclick="calcularQuartis()">Calcular Saneamento</button>
         <button class="btn btn-ghost" style="border:1px solid #cbd5e1" onclick="limparCotacao()">Limpar</button>
       </div>
       <div id="cotacaoResultado" style="margin-top:10px"></div>
