@@ -4019,102 +4019,147 @@ function calcQuartil(arr, p){
 window.calcularQuartis=function(){
   var cont=document.getElementById('cotacaoInputs');
   var vals=[];
-  var fontes=[];
   for(var i=0;i<cont.children.length;i++){
     var inp=document.getElementById('cot_'+i);
     var fonteEl=document.getElementById('cot_fonte_'+i);
     if(!inp) continue;
-    var v=String(inp.value).replace('R$','').replace(/\./g,'').replace(',','.').trim();
-    // permite ponto decimal
-    if(String(inp.value).includes(',') && String(inp.value).includes('.')){
-      v=String(inp.value).replace(/\./g,'').replace(',','.').replace('R$','').trim();
-    } else {
-      v=String(inp.value).replace(',','.').replace('R$','').trim();
-    }
+    var raw=String(inp.value);
+    var v;
+    if(raw.includes(',') && raw.includes('.')){ v=raw.replace(/\./g,'').replace(',','.').replace('R$','').trim(); }
+    else { v=raw.replace(',','.').replace('R$','').trim(); }
     var tipoEl=document.getElementById('cot_tipo_'+i);
-    // compatibilidade retroativa com checkbox antigo
     var ataEl=document.getElementById('cot_ata_'+i);
     var tipo = tipoEl ? tipoEl.value : (ataEl && ataEl.checked ? 'ata' : 'mercado');
-    var isAta = tipo === 'ata';
     var n=parseFloat(v);
-    if(!isNaN(n) && n>0){ vals.push({v:n, f:(fonteEl?fonteEl.value:'Fonte '+(i+1)), ata:isAta, tipo:tipo}); }
+    if(!isNaN(n) && n>0){ vals.push({v:n, f:(fonteEl&&fonteEl.value?fonteEl.value:'Fonte '+(i+1)), ata:tipo==='ata', tipo:tipo}); }
   }
   if(vals.length<3){ document.getElementById('cotacaoResultado').innerHTML='<div style="color:#dc2626;font-size:10px">Insira pelo menos 3 preços válidos</div>'; return; }
-  var sorted=vals.slice().sort(function(a,b){return a.v-b.v;});
-  var sortedVals=sorted.map(function(o){return o.v;});
-  var q1=calcQuartil(sortedVals,0.25);
-  var q3=calcQuartil(sortedVals,0.75);
-  var median=calcQuartil(sortedVals,0.5);
-  var iqr=q3-q1;
-  var limInf=q1 - 1.5*iqr;
-  var limSup=q3 + 1.5*iqr;
-  // Cotações de Ata/Contrato NUNCA são excluídas como outlier (IN SEGES/ME 65/2021, art. 6)
-  var validos=[], outliers=[];
-  sorted.forEach(function(o){ if(o.ata || (o.v>=limInf && o.v<=limSup)) validos.push(o.v); else outliers.push(o.v); });
-  var fontes=sorted.map(function(o){ return o.f+(o.ata?' [Ata/Contrato]':'')+' : R$ '+o.v.toLocaleString('pt-BR',{minimumFractionDigits:2}); });
-  var medianaValida = validos.length? calcQuartil(validos,0.5) : median;
-  var mediaValida = validos.length? validos.reduce(function(s,x){return s+x;},0)/validos.length : 0;
-  // Coeficiente de Variação (CV) da amostra saneada - critério do TCU (item 4.3.9.3):
-  // CV <= 25% => amostra homogênea, usar MÉDIA; CV > 25% => forte dispersão, usar MEDIANA
+
+  // ── MÉTODO: IN SEGES/ME 65/2021 + TCU Acórdão 1.937/2013 ─────────────────
+  // 1ª passagem: excluir preços EXCESSIVOS (> 125% da média dos demais que não são Ata)
+  // 2ª passagem: excluir preços INEXEQUÍVEIS (< 75% da média dos demais que não são Ata)
+  // Ata/Contrato: NUNCA excluída (exequibilidade já verificada no processo licitatório)
+  // Iterativo: após cada exclusão recalcula a média e repete até estabilizar
+  var itens = vals.slice().map(function(o){ return {v:o.v, f:o.f, ata:o.ata, tipo:o.tipo, status:'valido', motivo:''}; });
+
+  function mediaDosSemAta(lista, excluirStatus){
+    var ativos = lista.filter(function(o){ return !excluirStatus || o.status==='valido'; });
+    var naoAta = ativos.filter(function(o){ return !o.ata; });
+    if(!naoAta.length) return 0;
+    return naoAta.reduce(function(s,o){return s+o.v;},0)/naoAta.length;
+  }
+
+  // Passo A: excluir excessivos iterativamente (> 125% da média dos demais)
+  var alterou=true, iter=0;
+  while(alterou && iter<20){
+    alterou=false; iter++;
+    var validosAtual = itens.filter(function(o){return o.status==='valido';});
+    validosAtual.forEach(function(item){
+      if(item.ata) return; // Ata nunca excluída
+      var demais = validosAtual.filter(function(o){return o!==item;});
+      if(!demais.length) return;
+      var mediaDemais = demais.reduce(function(s,o){return s+o.v;},0)/demais.length;
+      if(item.v > 1.25 * mediaDemais){ item.status='excessivo'; item.motivo='> 125% da média dos demais (R$ '+mediaDemais.toLocaleString('pt-BR',{minimumFractionDigits:2})+')'; alterou=true; }
+    });
+  }
+
+  // Passo B: excluir inexequíveis iterativamente (< 75% da média dos demais válidos)
+  alterou=true; iter=0;
+  while(alterou && iter<20){
+    alterou=false; iter++;
+    var validosAtual2 = itens.filter(function(o){return o.status==='valido';});
+    validosAtual2.forEach(function(item){
+      if(item.ata) return;
+      var demais2 = validosAtual2.filter(function(o){return o!==item;});
+      if(!demais2.length) return;
+      var mediaDemais2 = demais2.reduce(function(s,o){return s+o.v;},0)/demais2.length;
+      if(item.v < 0.75 * mediaDemais2){ item.status='inexequivel'; item.motivo='< 75% da média dos demais (R$ '+mediaDemais2.toLocaleString('pt-BR',{minimumFractionDigits:2})+')'; alterou=true; }
+    });
+  }
+
+  // Amostra saneada
+  var saneados = itens.filter(function(o){return o.status==='valido';});
+  var valoresSaneados = saneados.map(function(o){return o.v;});
+
+  // Estatísticas da amostra saneada
+  var mediaValida = valoresSaneados.length ? valoresSaneados.reduce(function(s,x){return s+x;},0)/valoresSaneados.length : 0;
+  var medianaValida = valoresSaneados.length ? calcQuartil(valoresSaneados.slice().sort(function(a,b){return a-b;}),0.5) : 0;
   var desvioPadrao = 0;
-  if(validos.length>1){
-    var somaQuad = validos.reduce(function(s,x){ return s+Math.pow(x-mediaValida,2); },0);
-    desvioPadrao = Math.sqrt(somaQuad/(validos.length-1));
+  if(valoresSaneados.length>1){
+    var somaQuad=valoresSaneados.reduce(function(s,x){return s+Math.pow(x-mediaValida,2);},0);
+    desvioPadrao=Math.sqrt(somaQuad/(valoresSaneados.length-1));
   }
   var cv = mediaValida>0 ? (desvioPadrao/mediaValida)*100 : 0;
   var criterioTCU = cv<=25 ? 'MEDIA' : 'MEDIANA';
-  // tabela
+
+  // Limites para exibição (referência dos válidos)
+  var limRef75 = mediaValida>0 ? 0.75*mediaValida : 0;
+  var limRef125 = mediaValida>0 ? 1.25*mediaValida : 0;
+
+  // ── HTML ──────────────────────────────────────────────────────────────────
+  var fmt=function(n){ return n.toLocaleString('pt-BR',{minimumFractionDigits:2}); };
+
   var html='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">';
-  html+='<div style="background:#f8fafc;border:1px solid #e2e8f0;padding:8px;border-radius:8px;font-size:10px"><b>Q1 (25%)</b><br><strong style="font-size:12px">R$ '+q1.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</strong></div>';
-  html+='<div style="background:#f8fafc;border:1px solid #e2e8f0;padding:8px;border-radius:8px;font-size:10px"><b>Q3 (75%)</b><br><strong style="font-size:12px">R$ '+q3.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</strong></div>';
-  html+='<div style="background:#fffbeb;border:1px solid #fde68a;padding:8px;border-radius:8px;font-size:10px"><b>IQR</b><br>'+iqr.toLocaleString('pt-BR',{minimumFractionDigits:2})+'<br><small>Lim Inf: '+limInf.toLocaleString('pt-BR',{minimumFractionDigits:2})+'<br>Lim Sup: '+limSup.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</small></div>';
-  html+='<div style="background:#f0f9ff;border:1px solid #7dd3fc;padding:8px;border-radius:8px;font-size:10px"><b>CV (Coef. de Variação)</b><br><strong style="font-size:14px;color:#0c4a6e">'+cv.toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+'%</strong><br><small>Válidos: '+validos.length+' / '+sorted.length+'</small></div>';
+  html+='<div style="background:#f8fafc;border:1px solid #e2e8f0;padding:8px;border-radius:8px;font-size:10px"><b>Limite inferior</b><br><strong style="font-size:12px">R$ '+fmt(limRef75)+'</strong><br><small style="color:#64748b">75% da média saneada</small></div>';
+  html+='<div style="background:#f8fafc;border:1px solid #e2e8f0;padding:8px;border-radius:8px;font-size:10px"><b>Limite superior</b><br><strong style="font-size:12px">R$ '+fmt(limRef125)+'</strong><br><small style="color:#64748b">125% da média saneada</small></div>';
+  html+='<div style="background:#fffbeb;border:1px solid #fde68a;padding:8px;border-radius:8px;font-size:10px"><b>Amostra saneada</b><br><strong style="font-size:12px">'+saneados.length+' / '+itens.length+'</strong><br><small style="color:#64748b">preços válidos</small></div>';
+  html+='<div style="background:#f0f9ff;border:1px solid #7dd3fc;padding:8px;border-radius:8px;font-size:10px"><b>CV (Coef. de Variação)</b><br><strong style="font-size:14px;color:#0c4a6e">'+cv.toLocaleString('pt-BR',{minimumFractionDigits:1,maximumFractionDigits:1})+'%</strong></div>';
   html+='</div>';
+
   html+='<div style="margin-top:8px;padding:8px;border-radius:8px;font-size:10px;background:'+(criterioTCU==='MEDIA'?'#dcfce7;border:1px solid #86efac':'#fef3c7;border:1px solid #fcd34d')+'">'
-      + (criterioTCU==='MEDIA'
-        ? '✅ <b>CV = '+cv.toFixed(1)+'% (≤25%)</b> → amostra homogênea. O TCU (item 4.3.9.3) recomenda usar a <b>MÉDIA</b> como preço de referência.'
-        : '⚠️ <b>CV = '+cv.toFixed(1)+'% (&gt;25%)</b> → forte dispersão. O TCU (item 4.3.9.3) recomenda usar a <b>MEDIANA</b> como preço de referência.')
-      + '</div>';
+      +(criterioTCU==='MEDIA'
+        ?'✅ <b>CV = '+cv.toFixed(1)+'% (≤25%)</b> → amostra homogênea. TCU Acórdão 1.937/2013 item 4.3.9.3 recomenda usar a <b>MÉDIA</b>.'
+        :'⚠️ <b>CV = '+cv.toFixed(1)+'% (&gt;25%)</b> → forte dispersão. TCU Acórdão 1.937/2013 item 4.3.9.3 recomenda usar a <b>MEDIANA</b>.')
+      +'</div>';
+
   html+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">';
-  html+='<button id="btnEscolherMedia" class="btn" style="padding:8px;font-weight:800;text-align:left" onclick="escolherCriterioCotacao(\'MEDIA\')"><span style="font-size:8px;display:block">MÉDIA SANEADA'+(criterioTCU==='MEDIA'?' • recomendado TCU':'')+'</span><span style="font-size:14px">R$ '+mediaValida.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</span></button>';
-  html+='<button id="btnEscolherMediana" class="btn" style="padding:8px;font-weight:800;text-align:left" onclick="escolherCriterioCotacao(\'MEDIANA\')"><span style="font-size:8px;display:block">MEDIANA SANEADA'+(criterioTCU==='MEDIANA'?' • recomendado TCU':'')+'</span><span style="font-size:14px">R$ '+medianaValida.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</span></button>';
+  html+='<button id="btnEscolherMedia" class="btn" style="padding:8px;font-weight:800;text-align:left" onclick="escolherCriterioCotacao(\'MEDIA\')"><span style="font-size:8px;display:block">MÉDIA SANEADA'+(criterioTCU==='MEDIA'?' • recomendado TCU':'')+'</span><span style="font-size:14px">R$ '+fmt(mediaValida)+'</span></button>';
+  html+='<button id="btnEscolherMediana" class="btn" style="padding:8px;font-weight:800;text-align:left" onclick="escolherCriterioCotacao(\'MEDIANA\')"><span style="font-size:8px;display:block">MEDIANA SANEADA'+(criterioTCU==='MEDIANA'?' • recomendado TCU':'')+'</span><span style="font-size:14px">R$ '+fmt(medianaValida)+'</span></button>';
   html+='</div>';
-  html+='<table class="cot-table" style="margin-top:10px"><thead><tr><th>PREÇO</th><th>STATUS</th><th>FONTE</th></tr></thead><tbody>';
-  sorted.forEach(function(o){
-    var isOut = !o.ata && (o.v<limInf || o.v>limSup);
-    var tipoLabels = {
-      ata:     {bg:'#4f46e5', txt:'white', label:'🔒 ATA/CONTRATO'},
-      painel:  {bg:'#0369a1', txt:'white', label:'🏛️ PAINEL PREÇOS'},
-      nfe:     {bg:'#0f766e', txt:'white', label:'🧾 NF-e'},
-      similar: {bg:'#7c3aed', txt:'white', label:'📋 CONT. SIMILAR'},
-      mercado: {bg:'#16a34a', txt:'white', label:'🏪 MERCADO'}
-    };
-    var tl = tipoLabels[o.tipo||'mercado'] || tipoLabels.mercado;
-    var fonteTag = '<span style="background:'+tl.bg+';color:'+tl.txt+';padding:2px 5px;border-radius:10px;font-size:8px;font-weight:700">'+tl.label+'</span>';
-    var statusTag = o.ata
-      ? ''
-      : (isOut
-        ? ' <span style="background:#ef4444;color:white;padding:2px 5px;border-radius:10px;font-size:8px;font-weight:700">EXCLUÍDO</span>'
-        : ' <span style="background:#22c55e;color:white;padding:2px 5px;border-radius:10px;font-size:8px;font-weight:700">VÁLIDO</span>');
-    var ataNota = o.ata ? ' <span style="font-size:8px;color:#6366f1" title="IN SEGES/ME 65/2021, art. 6º — preço de Ata/Contrato não é excluído como outlier">✓ não excluído</span>' : '';
-    html+='<tr class="'+(isOut?'outlier':'valido')+'"><td>R$ '+o.v.toLocaleString('pt-BR',{minimumFractionDigits:2})+'</td><td>'+fonteTag+statusTag+ataNota+'</td><td style="font-size:9px">'+o.f+'</td></tr>';
+
+  // Tabela de cotações
+  var tipoLabels={
+    ata:    {bg:'#4f46e5',txt:'white',label:'🔒 ATA/CONTRATO'},
+    painel: {bg:'#0369a1',txt:'white',label:'🏛️ PAINEL PREÇOS'},
+    nfe:    {bg:'#0f766e',txt:'white',label:'🧾 NF-e'},
+    similar:{bg:'#7c3aed',txt:'white',label:'📋 CONT. SIMILAR'},
+    mercado:{bg:'#16a34a',txt:'white',label:'🏪 MERCADO'}
+  };
+  var sorted2=itens.slice().sort(function(a,b){return a.v-b.v;});
+  html+='<table class="cot-table" style="margin-top:10px"><thead><tr><th>PREÇO</th><th>TIPO / STATUS</th><th>FONTE</th></tr></thead><tbody>';
+  sorted2.forEach(function(o){
+    var tl=tipoLabels[o.tipo||'mercado']||tipoLabels.mercado;
+    var fonteTag='<span style="background:'+tl.bg+';color:'+tl.txt+';padding:2px 5px;border-radius:10px;font-size:8px;font-weight:700">'+tl.label+'</span>';
+    var statusTag='';
+    if(o.ata){
+      statusTag=' <span style="font-size:8px;color:#6366f1" title="IN SEGES/ME 65/2021, art. 6º">✓ não excluído</span>';
+    } else if(o.status==='excessivo'){
+      statusTag=' <span style="background:#ef4444;color:white;padding:2px 5px;border-radius:10px;font-size:8px;font-weight:700" title="'+o.motivo+'">EXCESSIVO</span>';
+    } else if(o.status==='inexequivel'){
+      statusTag=' <span style="background:#f97316;color:white;padding:2px 5px;border-radius:10px;font-size:8px;font-weight:700" title="'+o.motivo+'">INEXEQUÍVEL</span>';
+    } else {
+      statusTag=' <span style="background:#22c55e;color:white;padding:2px 5px;border-radius:10px;font-size:8px;font-weight:700">VÁLIDO</span>';
+    }
+    html+='<tr class="'+(o.status==='valido'||o.ata?'valido':'outlier')+'"><td>R$ '+fmt(o.v)+'</td><td>'+fonteTag+statusTag+'</td><td style="font-size:9px">'+o.f+'</td></tr>';
   });
   html+='</tbody></table>';
+  html+='<div style="margin-top:6px;font-size:9px;color:#64748b">Base legal: IN SEGES/ME 65/2021 art. 6 · TCU Acórdão 1.937/2013 item 4.3.9.3 · Lei 14.133/2021 art. 59 §4</div>';
   html+='<div id="cotacaoAcoesEscolha" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">'
-      + '<button class="btn btn-primary" onclick="aplicarMedianaCotacao()">✅ APLICAR AO ITEM EM EDIÇÃO</button>'
-      + '<button class="btn btn-dark" onclick="salvarCalculoCotacao()">💾 Salvar este cálculo</button>'
-      + '<span style="font-size:9px;color:#64748b">Aplicar usa o item clicado em "Buscar Mercado"; Salvar guarda o cálculo para exportar junto com o orçamento</span>'
-      + '</div>';
+      +'<button class="btn btn-primary" onclick="aplicarMedianaCotacao()">✅ APLICAR AO ITEM EM EDIÇÃO</button>'
+      +'<button class="btn btn-dark" onclick="salvarCalculoCotacao()">💾 Salvar este cálculo</button>'
+      +'<span style="font-size:9px;color:#64748b">Aplicar usa o item clicado em "Buscar Mercado"; Salvar guarda o cálculo para exportar junto com o orçamento</span>'
+      +'</div>';
   document.getElementById('cotacaoResultado').innerHTML=html;
-  // guarda dados completos da cotação (valores, fontes, estatísticas) para inserir item novo, salvar e exportar junto com o orçamento
+
+  var fontesFmt=sorted2.map(function(o){return o.f+' ['+o.tipo+(o.ata?' – Ata/Contrato':'')+'] : R$ '+fmt(o.v);});
   window._ultimaCotacaoDados = {
-    valores: sorted.map(function(o){return o.v;}),
-    fontes: fontes,
-    q1:q1, q3:q3, iqr:iqr, limInf:limInf, limSup:limSup,
-    validos:validos, outliers:outliers,
+    valores: sorted2.map(function(o){return o.v;}),
+    fontes: fontesFmt,
+    limInf:limRef75, limSup:limRef125,
+    validos:valoresSaneados, outliers:itens.filter(function(o){return o.status!=='valido'&&!o.ata;}).map(function(o){return o.v;}),
     mediana:medianaValida, media:mediaValida, cv:cv, criterioTCU:criterioTCU,
-    escolha: criterioTCU, // pré-seleciona o critério recomendado pelo TCU; o usuário pode trocar
-    data: new Date().toISOString().slice(0,10)
+    escolha:criterioTCU,
+    data:new Date().toISOString().slice(0,10)
   };
   escolherCriterioCotacao(criterioTCU);
   // após finalizar a cotação, libera a inserção do item novo de mercado no orçamento
