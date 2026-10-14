@@ -3699,7 +3699,7 @@ new MutationObserver(function(muts){
         </select>
         <span style="color:#64748b">Sistema calcula Q1(25%), Q3(75%), IQR, limites e mediana saneada.</span>
       </div>
-      <div id="cotacaoInputs" style="display:grid;grid-template-columns:1fr 1fr;gap:6px"></div>
+      <div id="cotacaoInputs" style="display:flex;flex-direction:column;gap:5px"></div>
       <div style="margin-top:8px;display:flex;gap:6px">
         <button class="btn btn-dark" onclick="calcularQuartis()">Calcular Quartis</button>
         <button class="btn btn-ghost" style="border:1px solid #cbd5e1" onclick="limparCotacao()">Limpar</button>
@@ -3989,16 +3989,16 @@ window.addCotacaoLinha=function(){
   var idx=cont.children.length;
   var div=document.createElement('div');
   div.style.display='flex'; div.style.gap='4px'; div.style.alignItems='center';
-  div.innerHTML='<label style="font-size:9px">C'+(idx+1)+':</label>'
-    +'<input type="text" inputmode="decimal" id="cot_'+idx+'" placeholder="R$ 0,00" style="width:90px;flex:none;padding:4px 6px;border:1px solid #f59e0b;border-radius:6px;font-size:10px" oninput="calcularQuartisLive()">'
-    +'<input type="text" id="cot_fonte_'+idx+'" placeholder="Descrição/Fornecedor" style="flex:1;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:9px">'
-    +'<select id="cot_tipo_'+idx+'" title="Tipo de fonte — Ata/Contrato nunca é excluída como outlier (IN SEGES/ME 65/2021, art. 6º)" style="padding:3px 4px;border:1px solid #a5b4fc;border-radius:6px;font-size:8px;color:#3730a3;background:#eef2ff;font-weight:700;cursor:pointer">'
+  div.innerHTML='<span style="font-size:9px;font-weight:700;color:#64748b;min-width:18px">C'+(idx+1)+'</span>'
+    +'<input type="text" inputmode="decimal" id="cot_'+idx+'" placeholder="R$ 0,00" style="width:88px;flex:none;padding:4px 6px;border:1px solid #f59e0b;border-radius:6px;font-size:10px;font-weight:700" oninput="calcularQuartisLive()">'
+    +'<select id="cot_tipo_'+idx+'" title="Tipo de fonte — Ata/Contrato nunca é excluída como outlier (IN SEGES/ME 65/2021, art. 6º)" style="flex:none;padding:3px 5px;border:1px solid #a5b4fc;border-radius:6px;font-size:9px;color:#3730a3;background:#eef2ff;font-weight:700;cursor:pointer">'
     +'<option value="mercado">🏪 Mercado</option>'
     +'<option value="painel">🏛️ Painel Preços</option>'
     +'<option value="nfe">🧾 NF-e</option>'
-    +'<option value="similar">📋 Contrat. Similar</option>'
-    +'<option value="ata" style="color:#4f46e5;background:#ede9fe">🔒 Ata/Contrato</option>'
-    +'</select>';
+    +'<option value="similar">📋 Cont. Similar</option>'
+    +'<option value="ata" style="color:#4f46e5;background:#ede9fe;font-weight:800">🔒 Ata / Contrato</option>'
+    +'</select>'
+    +'<input type="text" id="cot_fonte_'+idx+'" placeholder="Descrição / Fornecedor" style="flex:1;min-width:0;padding:4px 6px;border:1px solid #cbd5e1;border-radius:6px;font-size:9px">';
   cont.appendChild(div);
 };
 window.limparCotacao=function(){ var c=document.getElementById('cotacaoInputs'); if(c) c.innerHTML=''; initCotInputs(); document.getElementById('cotacaoResultado').innerHTML=''; var box=document.getElementById('cotacaoNovoItemBox'); if(box) box.style.display='none'; window._ultimaCotacaoDados=null; };
